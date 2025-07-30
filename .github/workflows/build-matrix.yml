@@ -1,0 +1,85 @@
+name: Build and Release (Multi-Platform)
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+        python-version: [3.11]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --windowed excel_sorter.py
+
+      - name: Package executables
+        shell: bash
+        run: |
+          # Create OS-specific directories
+          mkdir windows_package mac_package linux_package
+          
+          # Windows package
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp dist/excel_sorter.exe windows_package/
+            # Use PowerShell for zipping on Windows
+            powershell "Compress-Archive -Path windows_package -DestinationPath EX-sorter_Windows.zip"
+          fi
+
+          # macOS package
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            cp dist/excel_sorter mac_package/
+            zip -r EX-sorter_macOS.zip mac_package
+          fi
+
+          # Linux package
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            cp dist/excel_sorter linux_package/
+            zip -r EX-sorter_Linux.zip linux_package
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-package
+          path: EX-sorter_*.zip
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/windows-latest-package/EX-sorter_Windows.zip
+            artifacts/macos-latest-package/EX-sorter_macOS.zip
+            artifacts/ubuntu-latest-package/EX-sorter_Linux.zip
